@@ -1,18 +1,13 @@
 {
-  "dependencies": {
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.7"
-  },
-  "name": "ayana",
+  "name": "coxshop-wa-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "WhatsApp Bot for Cox Shop BD",
   "main": "whatsapp_bot.js",
-  "devDependencies": {},
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node whatsapp_bot.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "qrcode": "^1.5.3"
+  }
 }
