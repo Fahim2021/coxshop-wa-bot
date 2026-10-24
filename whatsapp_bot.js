@@ -1,27 +1,12 @@
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu',
-            '--disable-extensions',
-            '--disable-software-rasterizer',
-            '--js-flags=--max-old-space-size=256'
-        ]
-    }
-});
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const QRCode = require('qrcode');
+const http = require('http');
+
+let currentQrDataUrl = '';
+let isConnected = false;
 
 // Cox Shop BD er shompurno product catalog
 const productCatalog = {
-    // ---------------- Authentic Shutki Combos ----------------
     trial_shutki: {
         keywords: ['বাজেট', 'ট্রায়াল', 'trial', 'budget', '৫০০ গ্রাম', '500g', '500 gm'],
         response: `📦 বাজেট ফ্রেন্ডলি শুঁটকি ট্রায়াল কম্বো (৫০০ গ্রাম) – অরিজিনাল কক্সবাজার নাজিরারটেক স্পেশাল
@@ -58,8 +43,6 @@ const productCatalog = {
 🔥 বিশেষ অফার প্রাইজ: মাত্র ১৪৯৯/- টাকা!
 🛒 অর্ডার করতে আপনার বিবরণ লিখে মেসেজ দিন।`
     },
-
-    // ---------------- Burmese Achar ----------------
     burmese_achar: {
         keywords: ['আচার', 'achar', 'বার্মিজ আচার', 'মিক্সড আচার', 'pickle', 'tok achar', 'jhal achar'],
         response: `🥭 প্রিমিয়াম বার্মিজ মিক্সড আচার কম্বো প্যাক (Burmese Special Achar Combo)
@@ -67,8 +50,6 @@ const productCatalog = {
 • দাম: ৪৫/- টাকা থেকে ১৬৯/- টাকা (প্যাক সাইজ অনুযায়ী)।
 🛒 অর্ডার করতে বা বিস্তারিত জানতে মেসেজ দিন।`
     },
-
-    // ---------------- Burmese Cosmetics ----------------
     bio_collagen_mask: {
         keywords: ['bio-collagen', 'collagen mask', 'কলাজেন', 'মাস্ক', 'mask', 'real deep mask'],
         response: `✨ Bio-Collagen Real Deep Mask
@@ -120,255 +101,112 @@ const productCatalog = {
     }
 };
 
-client.on('qr', (qr) => {
-    console.log('Nicher QR code-ti WhatsApp scan korun:\n');
-    qrcode.generate(qr, { small: true });
-});
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false
+    });
 
-client.on('ready', () => {
-    console.log('WhatsApp Bot shofolvabe connect hoyeche ebong chalu ache!');
-});
+    sock.ev.on('creds.update', saveCreds);
 
-client.on('message', async (msg) => {
-    const rawText = msg.body.trim();
-    const text = rawText.toLowerCase();
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-    // ==========================================
-    // ১. ওয়েবসাইট থেকে আসা ডিরেক্ট বাটন মেসেজসমূহ
-    // ==========================================
-
-    // (ক) হোটেল রুম বুকিং মেসেজ ডিটেকশন
-    const isHotelDirect = text.includes('আপনাদের হোটেলে একটি রুম বুকিং করতে চাচ্ছিলাম') ||
-                          text.includes('রুম বুকিং করতে চাচ্ছিলাম') ||
-                          (text.includes('হোটেল') && text.includes('বুকিং')) ||
-                          (text.includes('room') && text.includes('booking'));
-
-    if (isHotelDirect) {
-        const hotelReply = 
-`🏨 *কক্সবাজার হোটেল রুম বুকিং সার্ভিস*
-
-কক্সবাজারে আপনার ভ্রমণকে আরামদায়ক ও স্মরণীয় করতে আমাদের সাথে যুক্ত প্রিমিয়াম হোটেল ও রিসোর্টে রুম বুকিং করতে পারেন।
-
-রুম বুকিং কনফার্ম ও স্পেশাল অফার জানতে নিচের তথ্যগুলো লিখে পাঠান:
-১. *চেক-ইন তারিখ:* 
-২. *চেক-আউট তারিখ:* 
-৩. *মোট অতিথি সংখ্যা:* (প্রাপ্তবয়স্ক ও শিশু)
-৪. *রুমের ক্যাটাগরি:* (Couple Deluxe / Family Suite / Sea View AC)
-৫. *আপনার নাম ও মোবাইল নম্বর:*
-
-তথ্য পাঠালে আমাদের প্রতিনিধি সরাসরি বর্তমান রুম অ্যাভেইলেবিলিটি ও সেরা ডিসকাউন্ট প্রাইজ জানিয়ে আপনার বুকিং নিশ্চিত করবে।`;
-
-        await msg.reply(hotelReply);
-        return;
-    }
-
-    // (খ) এয়ার অথবা বাস টিকিট বুকিং মেসেজ ডিটেকশন
-    const isTicketDirect = text.includes('এয়ার অথবা বাস টিকিট বুকিং করতে চাচ্ছিলাম') ||
-                           text.includes('সিট অ্যাভেইলেবিলিটি সম্পর্কে জানা যাবে কি') ||
-                           text.includes('টিকিট বুকিং করতে চাচ্ছিলাম') ||
-                           (text.includes('টিকিট') && (text.includes('বাস') || text.includes('এয়ার') || text.includes('বিমান'))) ||
-                           text.includes('air ticket') ||
-                           text.includes('bus ticket');
-
-    if (isTicketDirect) {
-        const ticketReply = 
-`✈️🚌 *ঢাকা-কক্সবাজার রুটের এয়ার ও বাস টিকিট বুকিং সার্ভিস*
-
-আমাদের মাধ্যমে কোনো ঝামেলা ছাড়াই ঢাকা-কক্সবাজার রুটের যেকোনো এয়ারলাইন্স ও বিলাসবহুল বাসের টিকিট বুক করতে পারেন।
-
-সিট অ্যাভেইলেবিলিটি ও বুকিংয়ের জন্য নিচের তথ্যগুলো লিখে পাঠান:
-১. *ভ্রমণের মাধ্যম:* (এয়ার / বাস)
-২. *যাত্রার তারিখ ও সময়:* 
-৩. *রুট:* (ঢাকা থেকে কক্সবাজার / কক্সবাজার থেকে ঢাকা)
-৪. *যাত্রী সংখ্যা:* 
-৫. *বাসের ক্যাটাগরি (বাসের ক্ষেত্রে):* (AC Sleeper / Business Class / Economy AC)
-৬. *আপনার নাম ও মোবাইল নম্বর:*
-
-তথ্য পাওয়ার সাথে সাথে আমাদের রিজার্ভেশন টিম সিট চেক করে ভাড়া ও টিকিট চূড়ান্ত করবে।`;
-
-        await msg.reply(ticketReply);
-        return;
-    }
-
-    // ==========================================
-    // ২. নির্দিষ্ট প্রোডাক্ট চেক (শুঁটকি, আচার, কসমেটিকস)
-    // ==========================================
-    for (const key in productCatalog) {
-        const item = productCatalog[key];
-        const isMatched = item.keywords.some(keyword => text.includes(keyword.toLowerCase()));
-        if (isMatched) {
-            await msg.reply(item.response);
-            return;
+        if (qr) {
+            currentQrDataUrl = await QRCode.toDataURL(qr);
         }
-    }
 
-    // ==========================================
-    // ৩. পণ্য অর্ডার কনফার্মেশন ও পেমেন্ট বিবরণ
-    // ==========================================
-    const orderKeywords = [
-        'order', 'অর্ডার', 'নিতে চাই', 'কিনতে চাই', 'নিতে চায়', 'নেব', 'নেবো', 
-        'দিতে চাই', 'কনফার্ম', 'confirm', 'booking', 'বুকিং', 'পাঠান', 'পাঠিয়ে দেন'
-    ];
-    const isOrderRequest = orderKeywords.some(keyword => text.includes(keyword));
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            isConnected = false;
+            if (shouldReconnect) {
+                startBot();
+            }
+        } else if (connection === 'open') {
+            isConnected = true;
+            currentQrDataUrl = '';
+            console.log('WhatsApp Bot সফলভাবে যুক্ত হয়েছে এবং চালু আছে!');
+        }
+    });
 
-    if (isOrderRequest) {
-        const orderConfirmationFormat = 
-`📦 *Cox Shop BD - অর্ডার কনফার্মেশন ও পেমেন্ট বিবরণ*
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        const msg = messages[0];
+        if (!msg.message || msg.key.fromMe) return;
 
-অর্ডারটি কনফার্ম করতে নিচের তথ্যগুলো পূরণ করে পাঠিয়ে দিন:
-১. *প্রোডাক্টের নাম ও পরিমাণ:* 
-২. *আপনার নাম:* 
-৩. *মোবাইল নম্বর:* 
-৪. *বিকল্প মোবাইল নম্বর (যদি থাকে):*
-৫. *সম্পূর্ণ ঠিকানা:* (গ্রাম/মহল্লা, থানা/উপজেলা, জেলা)
+        const sender = msg.key.remoteJid;
+        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').toLowerCase().trim();
 
----
-🚚 *ডেলিভারি চার্জ বিবরণ (হোম ডেলিভারি):*
-• কক্সবাজার শহরের ভেতরে: ৭০/- টাকা
-• কক্সবাজারের বাইরে সারাদেশে: ১৩০/- টাকা
+        const reply = async (replyText) => {
+            await sock.sendMessage(sender, { text: replyText });
+        };
 
----
-💳 *পেমেন্ট অপশন (যেকোনো একটি বেছে নিন):*
+        // ১. ওয়েবসাইট থেকে আসা ডিরেক্ট বাটন মেসেজসমূহ
+        if (text.includes('আপনাদের হোটেলে একটি রুম বুকিং করতে চাচ্ছিলাম') || text.includes('রুম বুকিং করতে চাচ্ছিলাম') || (text.includes('হোটেল') && text.includes('বুকিং'))) {
+            return await reply(`🏨 *কক্সবাজার হোটেল রুম বুকিং সার্ভিস*\n\nকক্সবাজারে আপনার ভ্রমণকে আরামদায়ক করতে আমাদের সাথে যুক্ত প্রিমিয়াম হোটেল ও রিসোর্টে রুম বুকিং করতে পারেন।\n\nরুম বুকিং কনফার্ম করতে নিচের তথ্যগুলো পাঠান:\n১. *চেক-ইন তারিখ:*\n২. *চেক-আউট তারিখ:*\n৩. *মোট অতিথি সংখ্যা:*\n৪. *রুমের ক্যাটাগরি:* (Couple Deluxe / Family Suite / Sea View AC)\n৫. *আপনার নাম ও মোবাইল নম্বর:*`);
+        }
 
-১. *ক্যাশ অন ডেলিভারি (পণ্য হাতে পেয়ে পেমেন্ট):*
-• ক্যাশ অন ডেলিভারিতে অর্ডার কনফার্ম করতে ডেলিভারি চার্জ (কক্সবাজার শহরে ৭০/- টাকা / কক্সবাজারের বাইরে ১৩০/- টাকা) অগ্রিম প্রদান করতে হবে। বাকি পণ্যের মূল্য প্রোডাক্ট হাতে পেয়ে পরিশোধ করবেন।
+        if (text.includes('এয়ার অথবা বাস টিকিট বুকিং করতে চাচ্ছিলাম') || text.includes('সিট অ্যাভেইলেবিলিটি সম্পর্কে জানা যাবে কি') || text.includes('টিকিট বুকিং')) {
+            return await reply(`✈️🚌 *ঢাকা-কক্সবাজার রুটের এয়ার ও বাস টিকিট বুকিং সার্ভিস*\n\nআমাদের মাধ্যমে সহজে এয়ারলাইন্স ও বাসের টিকিট বুক করুন।\n\nবুকিংয়ের তথ্য পাঠান:\n১. *ভ্রমণের মাধ্যম:* (এয়ার / বাস)\n২. *যাত্রার তারিখ ও সময়:*\n৩. *রুট:* (ঢাকা-কক্সবাজার / কক্সবাজার-ঢাকা)\n৪. *যাত্রী সংখ্যা:*\n৫. *বাসের ক্যাটাগরি:* (AC Sleeper / Business / Economy)\n৬. *আপনার নাম ও মোবাইল নম্বর:*`);
+        }
 
-২. *ফুল পেমেন্ট (সম্পূর্ণ মূল্য পরিশোধ):*
-• আপনি চাইলে প্রোডাক্টের মূল্যের সাথে ডেলিভারি চার্জসহ সম্পূর্ণ টাকা একসাথে অগ্রিম পরিশোধ করে দিতে পারেন।
+        // ২. নির্দিষ্ট প্রোডাক্ট চেক
+        for (const key in productCatalog) {
+            const item = productCatalog[key];
+            if (item.keywords.some(k => text.includes(k.toLowerCase()))) {
+                return await reply(item.response);
+            }
+        }
 
----
-📱 *আমাদের পার্সোনাল পেমেন্ট নম্বর (Send Money):*
-• *bKash (বিকাশ):* 01619915414
-• *Nagad (নগদ):* 01619915414
-• *Upay (উপায়):* 01619915414
+        // ৩. অর্ডার কনফার্মেশন ও পেমেন্ট
+        const orderKeywords = ['order', 'অর্ডার', 'নিতে চাই', 'কিনতে চাই', 'নিতে চায়', 'নেব', 'নেবো', 'দিতে চাই', 'কনফার্ম', 'confirm'];
+        if (orderKeywords.some(k => text.includes(k))) {
+            return await reply(`📦 *Cox Shop BD - অর্ডার কনফার্মেশন ও পেমেন্ট বিবরণ*\n\nঅর্ডারটি কনফার্ম করতে তথ্যগুলো পাঠান:\n১. *প্রোডাক্টের নাম ও পরিমাণ:*\n২. *আপনার নাম:*\n৩. *মোবাইল নম্বর:*\n৪. *বিকল্প মোবাইল নম্বর (যদি থাকে):*\n৫. *সম্পূর্ণ ঠিকানা:* (গ্রাম/মহল্লা, থানা/উপজেলা, জেলা)\n\n---\n🚚 *ডেলিভারি চার্জ বিবরণ (হোম ডেলিভারি):*\n• কক্সবাজার শহরের ভেতরে: ৭০/- টাকা\n• কক্সবাজারের বাইরে সারাদেশে: ১৩০/- টাকা\n\n---\n💳 *পেমেন্ট অপশন:*\n১. ক্যাশ অন ডেলিভারিতে অর্ডার কনফার্ম করতে ডেলিভারি চার্জ অগ্রিম দিতে হবে। বাকি টাকা প্রোডাক্ট হাতে পেয়ে পরিশোধ করবেন।\n২. চাইলে সম্পূর্ণ টাকা একসাথে পরিশোধ করে দিতে পারেন।\n\n📱 *পার্সোনাল নম্বর (Send Money):*\n• *bKash / Nagad / Upay:* 01619915414\n\nটাকা পাঠানোর পর লাস্ট ৪ ডিজিট পাঠিয়ে দিন।`);
+        }
 
-*(টাকা পাঠানোর পর আপনি যে নম্বর থেকে পাঠিয়েছেন তার শেষের ৪টি ডিজিট অথবা ট্রানজেকশন আইডি লিখে মেসেজ দিন। আপনার তথ্য ও পেমেন্ট পাওয়ার সাথে সাথেই প্রতিনিধি কল দিয়ে অর্ডার চূড়ান্ত করবে। ধন্যবাদ!)*`;
+        // ৪. মেনু ও প্রাইস
+        if (text.includes('দাম') || text.includes('price') || text.includes('অফার') || text.includes('মেনু') || text.includes('লিস্ট')) {
+            return await reply(`আসসালামু আলাইকুম! Cox Shop BD-তে স্বাগতম।\n\n১. অথেনটিক শুঁটকি কম্বো (৭৯৯/- থেকে ১৪৯৯/- টাকা)\n২. অরিজিনাল বার্মিজ কসমেটিকস ও থানাকা (১৪৯/- থেকে ৪৫০/- টাকা)\n৩. প্রিমিয়াম বার্মিজ স্পেশাল আচার (৪৫/- থেকে ১৬৯/- টাকা)\n৪. হোটেল রুম বুকিং ও ঢাকা-কক্সবাজার টিকিট সার্ভিস\n\nযেকোনো প্রোডাক্টের নাম লিখে মেসেজ দিন।\nওয়েবসাইট: https://coxshopbd.com`);
+        }
 
-        await msg.reply(orderConfirmationFormat);
-        return;
-    }
+        // ৫. সম্ভাষণ
+        const greetings = ['সালাম', 'আসসালামু', 'আলাইকুম', 'স্লাম', 'হাই', 'হ্যালো', 'salam', 'hi', 'hello', 'hlw', 'hey'];
+        if (greetings.some(k => text.includes(k))) {
+            return await reply('আসসালামু আলাইকুম! Cox Shop BD-তে স্বাগতম। বিষমুক্ত শুঁটকি, বার্মিজ থানাকা, কসমেটিকস ও বুকিং সার্ভিসের বিস্তারিত জানতে নির্দিষ্ট পণ্য বা সার্ভিসের নাম লিখে মেসেজ দিন।');
+        }
+    });
+}
 
-    // ==========================================
-    // ৪. ক্যাটাগরি মেনু ও প্রাইজ লিস্ট
-    // ==========================================
+startBot();
 
-    // শুঁটকি ক্যাটাগরি
-    if (text.includes('শুঁটকি') || text.includes('শুটকি') || text.includes('shutki')) {
-        const shutkiSummary = 
-`🐟 কক্স শপ বিডি - নাজিরারটেকের ১০০% বিষমুক্ত শুঁটকি কম্বোসমূহ:
-
-১. বাজেট ফ্রেন্ডলি ট্রায়াল কম্বো (৫০০ গ্রাম) - মাত্র ৭৯৯/- (রেগুলার ৮৯৯/-)
-২. স্পেশাল ঝাল ভর্তা কম্বো (১ কেজি) - মাত্র ১১৯৯/- (রেগুলার ১২৯৯/-)
-৩. ট্র্যাডিশনাল চাটগাঁইয়া ভুনা কম্বো (১ কেজি) - মাত্র ১২৯৯/- (রেগুলার ১৩৯৯/-)
-৪. প্রিমিয়াম সী-ফুড মেগা কম্বো (১ কেজি) - মাত্র ১৪৯৯/- (রেগুলার ১৬৯৯/-)
-
-প্যাকেজের বিস্তারিত দেখতে যেকোনো কম্বোর নাম লিখে মেসেজ দিন।`;
-        await msg.reply(shutkiSummary);
-        return;
-    }
-
-    // বার্মিজ কসমেটিকস ও আচার
-    if (text.includes('বার্মিজ') || text.includes('কসমেটিক') || text.includes('cosmetic') || text.includes('রূপচর্চা')) {
-        const burmeseSummary = 
-`✨ আমাদের বার্মিজ প্রোডাক্ট ও রূপচর্চা কালেকশন:
-
-• Bio-Collagen Real Deep Mask - ২৯৯/-
-• Asantee Tamarind & Goat Milk Soap - ২২৯/-
-• অরিজিনাল বার্মিজ থানাকা - ৪৫০/-
-• Myat Bhoon Pwint থানাকা লোশন (75ml) - ১৪৯/-
-• Shwe Pyi Nann থানাকা ও চন্দন বডি লোশন (200ml) - ৩৩৯/-
-• Shwe Pyi Nann থানাকা কেক বার - ১৪৯/-
-• অরিজিনাল Bee & Flower চন্দন সাবান - ২৪০/- থেকে ৮৮০/-
-• প্রিমিয়াম বার্মিজ মিক্সড আচার কম্বো - ৪৫/- থেকে ১৬৯/-
-
-যেকোনো প্রোডাক্টের বিস্তারিত জানতে পণ্যটির নাম লিখে মেসেজ দিন।`;
-        await msg.reply(burmeseSummary);
-        return;
-    }
-
-    // সামগ্রিক প্রাইস লিস্ট বা অফার
-    if (text.includes('দাম') || text.includes('price') || text.includes('অফার') || text.includes('মেনু') || text.includes('লিস্ট') || text.includes('list') || text.includes('catalog')) {
-        const generalMenu = 
-`আসসালামু আলাইকুম! Cox Shop BD-তে স্বাগতম। 
-
-আমাদের জনপ্রিয় ক্যাটাগরি ও অফার:
-১. অথেনটিক শুঁটকি কম্বো (৭৯৯/- থেকে ১৪৯৯/- টাকা)
-২. অরিজিনাল বার্মিজ কসমেটিকস ও থানাকা (১৪৯/- থেকে ৪৫০/- টাকা)
-৩. প্রিমিয়াম বার্মিজ স্পেশাল আচার (৪৫/- থেকে ১৬৯/- টাকা)
-৪. হোটেল রুম বুকিং ও ঢাকা-কক্সবাজার টিকিট সার্ভিস
-
-যেকোনো নির্দিষ্ট পণ্যের নাম বা সার্ভিসের নাম লিখে মেসেজ দিলেই বিস্তারিত তথ্য পেয়ে যাবেন।
-ওয়েবসাইট: https://coxshopbd.com`;
-        await msg.reply(generalMenu);
-        return;
-    }
-
-    // ==========================================
-    // ৫. অভিবাদন ও সালামের সব প্রচলিত ভ্যারিয়েশন
-    // ==========================================
-    const greetingsKeywords = [
-        'সালাম', 'আসসালামু', 'আলাইকুম', 'স্লাম', 'হাই', 'হ্যালো', 'হেলো', 'কেমন আছেন', 'নমস্কার', 'আদাব',
-        'salam', 'slaam', 'slam', 'slm', 'asalam', 'assalam', 'assalamu', 'assalamualaikum', 'assalamu alaikum',
-        'alaikum', 'asalamu alaikum', 'assalamu alaykum', 'walaikum',
-        'hi', 'hii', 'hiii', 'hello', 'hlw', 'helo', 'hey', 'heyy', 'yo', 'bro', 'vai', 'bhai',
-        'good morning', 'good evening', 'good afternoon',
-        'kemon achen', 'kemon asen', 'kemon achos', 'ki obostha', 'kire'
-    ];
-
-    const isGreeting = greetingsKeywords.some(keyword => text.includes(keyword));
-
-    if (isGreeting) {
-        await msg.reply('আসসালামু আলাইকুম! Cox Shop BD-তে স্বাগতম। বিষমুক্ত শুঁটকি, খাঁটি বার্মিজ থানাকা ও কসমেটিকস ছাড়াও হোটেল ও বাস/এয়ার টিকিট বুকিংয়ের সুবিধা আমাদের কাছে রয়েছে। বিস্তারিত জানতে নির্দিষ্ট বিষয়ে লিখে মেসেজ দিন।');
-        return;
-    }
-});
-
-client.initialize();
-const http = require('http');
-
-let currentQrCode = '';
-
-client.on('qr', (qr) => {
-    console.log('New QR generated');
-    currentQrCode = qr;
-});
-
-client.on('ready', () => {
-    currentQrCode = 'CONNECTED';
-});
-
-const port = process.env.PORT || 3000;
+// HTTP Server
+const port = process.env.PORT || 10000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    
-    if (currentQrCode === 'CONNECTED') {
+    if (isConnected) {
         res.end(`
             <div style="text-align:center; padding:50px; font-family:sans-serif;">
                 <h2 style="color:green;">✅ WhatsApp Bot সফলভাবে যুক্ত হয়েছে এবং চালু আছে!</h2>
-                <p>এখন আপনার পিসি বন্ধ থাকলেও বট স্বয়ংক্রিয়ভাবে রিপ্লাই দিতে থাকবে।</p>
+                <p>এখন আপনার পিসি বন্ধ থাকলেও বট ২৪/৭ কাজ করবে।</p>
             </div>
         `);
-    } else if (currentQrCode) {
-        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(currentQrCode)}`;
+    } else if (currentQrDataUrl) {
         res.end(`
             <div style="text-align:center; padding:30px; font-family:sans-serif;">
                 <h2>Cox Shop BD - WhatsApp Bot Login</h2>
                 <p>মোবাইল থেকে <b>Linked Devices</b> খুলে নিচের QR কোডটি স্ক্যান করুন:</p>
-                <img src="${qrUrl}" alt="WhatsApp QR Code" style="border:10px solid #f0f0f0; border-radius:8px;" />
-                <p style="color:gray; font-size:13px;">(পৃষ্ঠাটি প্রতি ২০ সেকেন্ড পর স্বয়ংক্রিয়ভাবে রিফ্রেশ হবে)</p>
-                <script>
-                    setTimeout(() => { window.location.reload(); }, 20000);
-                </script>
+                <img src="${currentQrDataUrl}" alt="WhatsApp QR Code" style="border:10px solid #f0f0f0; border-radius:8px;" />
+                <p style="color:gray; font-size:13px;">(পৃষ্ঠাটি প্রতি ২০ সেকেন্ড পর রিফ্রেশ হবে)</p>
+                <script>setTimeout(() => { window.location.reload(); }, 20000);</script>
             </div>
         `);
     } else {
         res.end(`
             <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                <h3>QR কোড প্রস্তুত হচ্ছে, অনুগ্রহ করে ৫-১০ সেকেন্ড অপেক্ষা করুন...</h3>
-                <script>
-                    setTimeout(() => { window.location.reload(); }, 5000);
-                </script>
+                <h3>QR কোড তৈরি হচ্ছে, অনুগ্রহ করে ৫-১০ সেকেন্ড অপেক্ষা করুন...</h3>
+                <script>setTimeout(() => { window.location.reload(); }, 5000);</script>
             </div>
         `);
     }
-}).listen(port, () => console.log(`Server running on port ${port}`));
+}).listen(port, () => console.log(`Server listening on port ${port}`));
