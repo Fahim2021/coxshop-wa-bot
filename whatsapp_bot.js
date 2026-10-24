@@ -323,5 +323,50 @@ client.on('message', async (msg) => {
 
 client.initialize();
 const http = require('http');
+
+let currentQrCode = '';
+
+client.on('qr', (qr) => {
+    console.log('New QR generated');
+    currentQrCode = qr;
+});
+
+client.on('ready', () => {
+    currentQrCode = 'CONNECTED';
+});
+
 const port = process.env.PORT || 3000;
-http.createServer((req, res) => res.end('WhatsApp Bot is Running!')).listen(port, () => console.log(`Server listening on port ${port}`));
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    
+    if (currentQrCode === 'CONNECTED') {
+        res.end(`
+            <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                <h2 style="color:green;">✅ WhatsApp Bot সফলভাবে যুক্ত হয়েছে এবং চালু আছে!</h2>
+                <p>এখন আপনার পিসি বন্ধ থাকলেও বট স্বয়ংক্রিয়ভাবে রিপ্লাই দিতে থাকবে।</p>
+            </div>
+        `);
+    } else if (currentQrCode) {
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(currentQrCode)}`;
+        res.end(`
+            <div style="text-align:center; padding:30px; font-family:sans-serif;">
+                <h2>Cox Shop BD - WhatsApp Bot Login</h2>
+                <p>মোবাইল থেকে <b>Linked Devices</b> খুলে নিচের QR কোডটি স্ক্যান করুন:</p>
+                <img src="${qrUrl}" alt="WhatsApp QR Code" style="border:10px solid #f0f0f0; border-radius:8px;" />
+                <p style="color:gray; font-size:13px;">(পৃষ্ঠাটি প্রতি ২০ সেকেন্ড পর স্বয়ংক্রিয়ভাবে রিফ্রেশ হবে)</p>
+                <script>
+                    setTimeout(() => { window.location.reload(); }, 20000);
+                </script>
+            </div>
+        `);
+    } else {
+        res.end(`
+            <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                <h3>QR কোড প্রস্তুত হচ্ছে, অনুগ্রহ করে ৫-১০ সেকেন্ড অপেক্ষা করুন...</h3>
+                <script>
+                    setTimeout(() => { window.location.reload(); }, 5000);
+                </script>
+            </div>
+        `);
+    }
+}).listen(port, () => console.log(`Server running on port ${port}`));
